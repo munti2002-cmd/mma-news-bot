@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main                # latest seen.json, not the commit from when the run was queued
       - name: Post news
         run: python3 bot.py --once
         env:
@@ -24,5 +26,9 @@ jobs:
         run: |
           git config user.name "news-bot"
           git config user.email "news-bot@users.noreply.github.com"
+          # merge with whatever is on main now, so a parallel run can't erase our list
+          cp seen.json "$RUNNER_TEMP/mine.json"
+          git fetch -q origin main && git reset -q --hard origin/main
+          python3 -c "import json,sys; a=json.load(open('seen.json')); b=json.load(open(sys.argv[1])); json.dump((a+[x for x in b if x not in set(a)])[-5000:], open('seen.json','w'))" "$RUNNER_TEMP/mine.json"
           git add seen.json
           git diff --cached --quiet || (git commit -m "update seen news" && git push)
