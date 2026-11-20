@@ -19,4 +19,4 @@ python3 bot.py
 
 Проверка без ключей: `python3 test_bot.py`.
 
-Источники, частота и лимит постов — в начале `bot.py` (`FEEDS`, `INTERVAL_MIN`, `MAX_POSTS_PER_RUN`), текст для нейросети — `PROMPT`, модель — `GEMINI_MODEL`.
+Источники, частота и лимит постов — в начале `bot.py` (`FEEDS`, `INTERVAL_MIN`, `MAX_POSTS_PER_RUN`), текст для нейросети — `PROMPT`, модели — `GEMINI_MODELS` (сильная, а если перегружена — лёгкая).

@@ -23,10 +23,12 @@ FEEDS = [
     "https://www.ufc.com/rss/news",
 ]
 MAX_POSTS_PER_RUN = 3      # don't flood the channel
+RUN_BUDGET_MIN = 8         # stop starting new posts after this, the rest waits for the next run
 INTERVAL_MIN = 15          # how often to check feeds
 ATOM = "{http://www.w3.org/2005/Atom}"
 CONTENT_ENCODED = "{http://purl.org/rss/1.0/modules/content/}encoded"
-GEMINI_MODEL = "gemini-3.8-flash"  # free tier; see aistudio.google.com/docs/models
+# free tier; the stronger model is often overloaded, then the lite one answers in seconds
+GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
 PROMPT = """Ты редактор русскоязычного Telegram-канала про MMA и UFC.
 Перепиши новость ниже в пост для канала:
@@ -119,22 +121,22 @@ def parse_fightnews(page_bytes):
 
 def rewrite(api_key, item):
     """Rewrite one news item with Gemini (free tier). Returns post text or None to skip."""
-    req = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
-        data=json.dumps({"model": GEMINI_MODEL, "input": PROMPT.format(**item)}).encode(),
-        headers={"x-goog-api-key": api_key, "Content-Type": "application/json",
-                 "Api-Revision": "2026-05-20"},
-    )
-    for attempt in range(3):  # free tier is often overloaded (503/429/timeouts)
+    for i, model in enumerate(GEMINI_MODELS):
+        req = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            data=json.dumps({"model": model, "input": PROMPT.format(**item)}).encode(),
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json",
+                     "Api-Revision": "2026-05-20"},
+        )
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with urllib.request.urlopen(req, timeout=60) as r:
                 resp = json.load(r)
             break
         except (urllib.error.HTTPError, TimeoutError) as e:
-            if attempt == 2 or (isinstance(e, urllib.error.HTTPError) and e.code not in (429, 500, 503)):
+            busy = not isinstance(e, urllib.error.HTTPError) or e.code in (429, 500, 503)
+            if not busy or i == len(GEMINI_MODELS) - 1:
                 raise
-            print(f"Gemini busy ({e}), retrying in 30s", file=sys.stderr)
-            time.sleep(30)
+            print(f"{model} busy ({e}), trying {GEMINI_MODELS[i + 1]}", file=sys.stderr)
     text = "".join(
         c.get("text", "")
         for step in resp.get("steps", []) if step.get("type") == "model_output"
@@ -204,7 +206,11 @@ def run_once(api_key, token, channel):
     new = pick_new(items, seen)
     # On the very first run post just one, the rest of the backlog is just marked seen.
     to_post = new[:1] if first_run else new[:MAX_POSTS_PER_RUN]
+    started = time.time()
     for it in to_post:
+        if time.time() - started > RUN_BUDGET_MIN * 60:
+            print("time budget used up, the rest waits for the next run", file=sys.stderr)
+            break
         try:
             text = rewrite(api_key, it)
             if text:
@@ -214,6 +220,7 @@ def run_once(api_key, token, channel):
             print(f"failed on {it['link']}: {e}", file=sys.stderr)
             continue  # stays unseen -> retried next run
         seen_list.append(it["id"])
+        SEEN_FILE.write_text(json.dumps(seen_list[-5000:]))  # save now: a killed run must not repost
     for it in new[len(to_post):]:
         seen_list.append(it["id"])  # skip backlog beyond the per-run limit
     SEEN_FILE.write_text(json.dumps(seen_list[-5000:]))  # keep newest ids only

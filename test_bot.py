@@ -21,7 +21,7 @@ assert bot.parse_fightnews(FN.encode()) == [{"id": "https://fightnews.info/a", "
                                             "link": "https://fightnews.info/a", "summary": 'Текст "x"...'}]
 
 # Gemini response parsing (fake HTTP)
-import io, urllib.request
+import io, urllib.error, urllib.request
 fake = {"steps": [{"type": "user_input"}, {"type": "model_output",
         "content": [{"type": "text", "text": "Пост"}]}]}
 orig_urlopen = urllib.request.urlopen
@@ -29,6 +29,14 @@ urllib.request.urlopen = lambda req, timeout: io.BytesIO(json.dumps(fake).encode
 assert bot.rewrite("k", {"title": "t", "summary": "s"}) == "Пост"
 fake["steps"][1]["content"][0]["text"] = "SKIP"
 assert bot.rewrite("k", {"title": "t", "summary": "s"}) is None
+calls = []
+def busy_then_ok(req, timeout):  # strong model overloaded -> lite model answers
+    calls.append(json.loads(req.data)["model"])
+    if len(calls) == 1:
+        raise urllib.error.HTTPError("u", 503, "busy", {}, None)
+    return io.BytesIO(json.dumps({"steps": [{"type": "model_output", "content": [{"type": "text", "text": "ok"}]}]}).encode())
+urllib.request.urlopen = busy_then_ok
+assert bot.rewrite("k", {"title": "t", "summary": "s"}) == "ok" and calls == bot.GEMINI_MODELS, calls
 urllib.request.urlopen = orig_urlopen
 
 # og:image extraction (attribute order varies between sites)
@@ -55,6 +63,13 @@ assert posted == ["l0"]
 feed[:0] = [{"id": "new", "title": "n", "link": "ln", "summary": ""}]
 bot.run_once(None, "t", "c")
 assert posted == ["l0", "ln"], posted
+bot.RUN_BUDGET_MIN = -1  # budget already used up: post nothing, keep the item for the next run
+feed[:0] = [{"id": "late", "title": "x", "link": "lx", "summary": ""}]
+bot.run_once(None, "t", "c")
+assert posted == ["l0", "ln"] and "late" not in json.loads(bot.SEEN_FILE.read_text())
+bot.RUN_BUDGET_MIN = 8
+bot.run_once(None, "t", "c")
+assert posted == ["l0", "ln", "lx"], posted
 
 # live feeds still parse
 import importlib
