@@ -1,7 +1,7 @@
 name: news
 on:
   schedule:
-    - cron: "*/15 * * * *"   # GitHub may start runs a few minutes late
+    - cron: "7,22,37,52 * * * *"  # off the busy :00/:15 marks; GitHub may still start late
   workflow_dispatch: {}      # "Run workflow" button for a manual run
 permissions:
   contents: write            # to save seen.json back to the repo
