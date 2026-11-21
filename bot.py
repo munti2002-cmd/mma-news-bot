@@ -121,10 +121,16 @@ def parse_fightnews(page_bytes):
 
 def rewrite(api_key, item):
     """Rewrite one news item with Gemini (free tier). Returns post text or None to skip."""
+    text = gemini(api_key, PROMPT.format(**item))
+    return None if not text or text == "SKIP" else text
+
+
+def gemini(api_key, prompt):
+    """Ask Gemini, falling back to the lite model when the strong one is busy. Returns text."""
     for i, model in enumerate(GEMINI_MODELS):
         req = urllib.request.Request(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
-            data=json.dumps({"model": model, "input": PROMPT.format(**item)}).encode(),
+            data=json.dumps({"model": model, "input": prompt}).encode(),
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json",
                      "Api-Revision": "2026-05-20"},
         )
@@ -137,12 +143,11 @@ def rewrite(api_key, item):
             if not busy or i == len(GEMINI_MODELS) - 1:
                 raise
             print(f"{model} busy ({e}), trying {GEMINI_MODELS[i + 1]}", file=sys.stderr)
-    text = "".join(
+    return "".join(
         c.get("text", "")
         for step in resp.get("steps", []) if step.get("type") == "model_output"
         for c in step.get("content", []) if c.get("type") == "text"
     ).strip()
-    return None if not text or text == "SKIP" else text
 
 
 def og_image(link):
